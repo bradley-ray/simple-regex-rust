@@ -51,51 +51,68 @@ pub fn compile(src: &str) -> Result<RegExpr, &str> {
     Ok(RegExpr{ instructions })
 }
 
+fn repeat(at_most: bool, src: &str, op: &Op, num: u64) -> u64 {
+    let mut count = 0;
+    for token in src.chars() {
+        let success = op.run(Some(token), None);
+        if !success || (at_most && count == num) {
+            break;
+        }
+        count += 1;
+    }
+    count
+}
+
 // start with just match for now
 // TODO: refactor probably the worst code i've ever written
 impl RegExpr {
     pub fn contain_match(&self,  src: &str) ->  bool {
+        let mut chr_idx = 0; // global run character idx
+        let mut src_idx = 0; // local run character idx
         let mut instr_idx = 0;
-        let mut src_idx = 0;
         loop {
             for (i, token) in src[src_idx..].chars().enumerate() {
-                let successful;
+                let mut successful;
                 let instr = self.instructions.get(instr_idx).unwrap();
                 let mut count = 0;
                 match instr {
+                    Op::Final => return instr.run(None, None),
                     Op::AtLeast(_) => {
                         instr_idx += 1;
-                        let cmp = self.instructions.get(instr_idx).unwrap();
-                        for token_ in src[src_idx+i..].chars() {
-                            if !cmp.run(Some(token_), None) {
-                                break;
-                            }
-                            count += 1;
+                        let op = self.instructions.get(instr_idx).unwrap();
+                        count = repeat(false, &src[src_idx+i..], &op, 0);
+                        successful = instr.run(Some(token), Some(count));
+                        // necessary so that current character isn't skipped
+                        if count == 0 && successful {
+                            src_idx += i;
+                            instr_idx += 1;
+                            break;
                         }
-                        successful = instr.run(None, Some(count));
                     },
                     Op::AtMost(num) => {
+                        // same here
                         instr_idx += 1;
-                        let cmp = self.instructions.get(instr_idx).unwrap();
-                        for token_ in src[src_idx+i..].chars() {
-                            if !cmp.run(Some(token_), None) || count >= *num {
-                                break;
-                            }
-                            count += 1;
+                        let op = self.instructions.get(instr_idx).unwrap();
+                        count = repeat(true, &src[src_idx+i..], &op, *num);
+                        successful = instr.run(Some(token), Some(count));
+                        if count == 0 && successful {
+                            src_idx += i;
+                            instr_idx += 1;
+                            break;
                         }
-                        successful = instr.run(None, None);
                     },
-                    Op::Cmp(_) => successful = instr.run(Some(token), None),
-                    Op::NoOp => successful = instr.run(None, None),
-                    Op::Final => return instr.run(None, None),
+                    _ => {},
                 };
+                successful = instr.run(Some(token), Some(count));
                 if !successful {
                     instr_idx = 0;
-                    src_idx += 1;
+                    chr_idx += 1;
+                    src_idx = chr_idx;
                     break;
                 }
                 instr_idx += 1;
             }
+
             if src_idx >= src.len() {
                 return false;
             }
@@ -109,9 +126,9 @@ mod tests {
 
     #[test]
     fn compile_valid_test() {
-        let re = "abc.[]+";
+        let re = "abc.*[]+";
         let tgt = vec![Op::Cmp('a'), Op::Cmp('b'), Op::Cmp('c'), 
-                       Op::NoOp, Op::Cmp('['), Op::AtLeast(1), 
+                       Op::AtLeast(0), Op::NoOp, Op::Cmp('['), Op::AtLeast(1), 
                        Op::Cmp(']'), Op::Final];
         let res = compile(re).unwrap();
         assert_eq!(tgt, res.instructions);
@@ -123,31 +140,24 @@ mod tests {
         assert_eq!(Err("invalid quantifier position"), compile(re));
         let re = "abc.[]++";
         assert_eq!(Err("invalid quantifier position"), compile(re));
-        let re = "abc.[]+?";
+        let re = "abc.+[]+?";
         assert_eq!(Err("invalid quantifier position"), compile(re));
     }
 
     #[test]
     fn contains_match_valid_test() {
-        // string needs to contain 'abc'
-        // followed by any character
-        // followed by [
-        // follow by ] one or more times
-        let re = "010234";
+        let re = "abce*a[]+";
+        // let re = "abce*.?[]+";
         let regex = compile(re).unwrap();
-        let is_match = regex.contain_match("010234");
+        let is_match = regex.contain_match("eftabca[]]]]");
         assert!(is_match);
-
     }
+
     #[test]
     fn contains_match_invalid_test() {
-        // string needs to contain 'abc'
-        // followed by any character
-        // followed by [
-        // follow by ] one or more times
-        let re = "aa+.[]+";
+        let re = "ab*a[]+";
         let regex = compile(re).unwrap();
-        let is_match = regex.contain_match("abc[]");
+        let is_match = regex.contain_match("abc[]]]]");
         assert!(!is_match);
     }
 }
