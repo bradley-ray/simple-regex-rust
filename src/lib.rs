@@ -66,22 +66,23 @@ fn repeat(at_most: bool, src: &str, op: &Op, num: u64) -> u64 {
 // start with just match for now
 // TODO: refactor probably the worst code i've ever written
 impl RegExpr {
-    pub fn contain_match(&self,  src: &str) ->  bool {
+    fn run(&self, src: &str) -> Option<(usize, usize)> {
         let mut chr_idx = 0; // global run character idx
         let mut src_idx = 0; // local run character idx
         let mut instr_idx = 0;
+        let mut len = 0;
         loop {
             for (i, token) in src[src_idx..].chars().enumerate() {
-                let mut successful;
+                let successful;
                 let instr = self.instructions.get(instr_idx).unwrap();
-                let mut count = 0;
                 match instr {
-                    Op::Final => return instr.run(None, None),
+                    Op::Final => return Some((chr_idx, len)),
                     Op::AtLeast(_) => {
                         instr_idx += 1;
                         let op = self.instructions.get(instr_idx).unwrap();
-                        count = repeat(false, &src[src_idx+i..], &op, 0);
-                        successful = instr.run(Some(token), Some(count));
+                        let count = repeat(false, &src[src_idx+i..], &op, 0);
+                        successful = instr.run(None, Some(count));
+                        len += count as usize;
                         // necessary so that current character isn't skipped
                         if count == 0 && successful {
                             src_idx += i;
@@ -93,30 +94,51 @@ impl RegExpr {
                         // same here
                         instr_idx += 1;
                         let op = self.instructions.get(instr_idx).unwrap();
-                        count = repeat(true, &src[src_idx+i..], &op, *num);
-                        successful = instr.run(Some(token), Some(count));
+                        let count = repeat(true, &src[src_idx+i..], &op, *num);
+                        successful = instr.run(None, Some(count));
+                        len += count as usize;
                         if count == 0 && successful {
                             src_idx += i;
                             instr_idx += 1;
                             break;
                         }
                     },
-                    _ => {},
+                    _ => { 
+                        len += 1; 
+                        successful = instr.run(Some(token), None)
+                    },
                 };
-                successful = instr.run(Some(token), Some(count));
                 if !successful {
                     instr_idx = 0;
                     chr_idx += 1;
                     src_idx = chr_idx;
+                    len = 0;
                     break;
                 }
                 instr_idx += 1;
             }
 
             if src_idx >= src.len() {
-                return false;
+                return None;
             }
         }
+    }
+
+    pub fn contain_match(&self,  src: &str) ->  bool {
+        match self.run(src) {
+            Some(_) => true,
+            None => false,
+        }
+    }
+
+    pub fn replace(&self, src: &str, tgt: &str) -> Option<String> {
+        let (idx, len) = match self.run(src) {
+            Some(result) => (result.0, result.1),
+            None => return None,
+        };
+
+        let new_str = String::from(&src[0..idx]) + tgt + &src[idx+len..];
+        Some(new_str)
     }
 }
 
@@ -147,9 +169,9 @@ mod tests {
     #[test]
     fn contains_match_valid_test() {
         let re = "abce*a[]+";
-        // let re = "abce*.?[]+";
+        let src = "eftabca[]]]";
         let regex = compile(re).unwrap();
-        let is_match = regex.contain_match("eftabca[]]]]");
+        let is_match = regex.contain_match(src);
         assert!(is_match);
     }
 
@@ -159,5 +181,25 @@ mod tests {
         let regex = compile(re).unwrap();
         let is_match = regex.contain_match("abc[]]]]");
         assert!(!is_match);
+    }
+
+    #[test]
+    fn replace_valid_test() {
+        let re = "abce*a[]+";
+        let src = "eftabca[]]]asfasdf";
+        let tgt = "hello";
+        let regex = compile(re).unwrap();
+        let result = regex.replace(src, tgt);
+        assert_eq!(Some(String::from("efthelloasfasdf")), result);
+    }
+
+    #[test]
+    fn replace_invalid_test() {
+        let re = "abce*a[]+";
+        let src = "eftabc[]]]asfasdf";
+        let tgt = "hello";
+        let regex = compile(re).unwrap();
+        let result = regex.replace(src, tgt);
+        assert_eq!(None, result);
     }
 }
