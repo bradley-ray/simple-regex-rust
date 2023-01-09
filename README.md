@@ -8,7 +8,10 @@ Inspired by [this article](https://www.cs.princeton.edu/courses/archive/spr09/co
 [Regex Wikipedia](https://en.wikipedia.org/wiki/Regular_expression)
 
 ## TODO
-- [ ] implement regex compiler
-	*
-- [ ] implement regex execute
-	*
+- [*] implement basic regex compiler
+- [*] implement basic regex execute
+- [ ] initial refactor for simplicity
+- [ ] add more features
+	- [ ] start and end of lines
+	- [ ] negates
+	- [ ] classes & groups
