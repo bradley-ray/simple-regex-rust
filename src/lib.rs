@@ -1,3 +1,9 @@
+enum State {
+    Stay,
+    Fail,
+    Done,
+}
+
 #[derive(Debug, PartialEq)]
 pub enum Op {
     NoOp,
@@ -18,7 +24,7 @@ impl Op {
 }
 
 #[derive(Debug, PartialEq)]
-pub struct RegExpr{ instructions: Vec<Op> }
+pub struct RegExpr{ ops: Vec<Op> }
 
 
 fn is_quantifier(token: char) -> bool {
@@ -26,19 +32,19 @@ fn is_quantifier(token: char) -> bool {
 }
 
 pub fn compile(src: &str) -> Result<RegExpr, &str> {
-    let mut instructions = Vec::with_capacity(64);
+    let mut ops = Vec::with_capacity(64);
     let mut valid_quant = false;
     for (i, token) in src.chars().enumerate() {
         if is_quantifier(token) && valid_quant {
             valid_quant = false;
-            instructions.insert(i-1, match token {
+            ops.insert(i-1, match token {
                 '*' => Op::AtLeast(0),
                 '+' => Op::AtLeast(1),
                 _   => Op::AtMost(1),
             });
         } else if !is_quantifier(token) {
             valid_quant = true;
-            instructions.push(match token {
+            ops.push(match token {
                 '.' => Op::NoOp,
                 chr => Op::Cmp(chr),
             })
@@ -47,77 +53,91 @@ pub fn compile(src: &str) -> Result<RegExpr, &str> {
         }
     }
 
-    instructions.push(Op::Final);
-    Ok(RegExpr{ instructions })
+    ops.push(Op::Final);
+    Ok(RegExpr{ ops })
 }
 
-fn repeat(at_most: bool, src: &str, op: &Op, num: u64) -> u64 {
+// repeat operation n times
+fn repeat_op(ops: &[Op], idx: usize, src: &str) -> (bool, bool, u64) {
+    let mut at_most = false;
+    let op = ops.get(idx).unwrap();
+    let num = match op {
+        &Op::AtLeast(n) => n,
+        &Op::AtMost(n) => {at_most=true; n},
+        _ => panic!("invalid repeat op"),
+    };
     let mut count = 0;
+    let next_op = ops.get(idx+1).unwrap();
     for token in src.chars() {
-        let success = op.run(Some(token), None);
+        let success = next_op.run(Some(token), None);
         if !success || (at_most && count == num) {
             break;
         }
         count += 1;
     }
-    count
+    let successful = op.run(None, Some(count));
+
+    (successful, count == 0 && successful, count)
 }
 
-// start with just match for now
-// TODO: refactor probably the worst code i've ever written
+// Finite state machine over source string
+fn iter_src(ops: &[Op], idx: usize, src: &str) -> (State, usize, usize) {
+    let mut op_idx = idx;
+    let mut len = 0;
+    for (i, token) in src.chars().enumerate() {
+        let successful;
+        let op = ops.get(op_idx).unwrap();
+        match op {
+            Op::Final => return (State::Done, len, op_idx),
+            Op::AtLeast(_) | Op::AtMost(_) => {
+                let src_slice = &src[i..];
+                let result = repeat_op(ops, op_idx, src_slice);
+                op_idx += 1;
+                successful = result.0;
+                len += result.2 as usize;
+                // return to this character on next iteration
+                if result.1 {
+                    return (State::Stay, i, op_idx+1);
+                }
+            },
+            _ => { 
+                len += 1; 
+                successful = op.run(Some(token), None);
+            },
+        };
+        if !successful {
+            break
+        }
+        op_idx += 1;
+        len += 1;
+    }
+
+    (State::Fail, 0, 0)
+}
+
 impl RegExpr {
+    // Execute the regular expression on source string
     fn run(&self, src: &str) -> Option<(usize, usize)> {
         let mut chr_idx = 0; // global run character idx
         let mut src_idx = 0; // local run character idx
-        let mut instr_idx = 0;
-        let mut len = 0;
+        let mut op_idx = 0;
         loop {
-            for (i, token) in src[src_idx..].chars().enumerate() {
-                let successful;
-                let instr = self.instructions.get(instr_idx).unwrap();
-                match instr {
-                    Op::Final => return Some((chr_idx, len)),
-                    Op::AtLeast(_) => {
-                        instr_idx += 1;
-                        let op = self.instructions.get(instr_idx).unwrap();
-                        let count = repeat(false, &src[src_idx+i..], &op, 0);
-                        successful = instr.run(None, Some(count));
-                        len += count as usize;
-                        // necessary so that current character isn't skipped
-                        if count == 0 && successful {
-                            src_idx += i;
-                            instr_idx += 1;
-                            break;
-                        }
-                    },
-                    Op::AtMost(num) => {
-                        // same here
-                        instr_idx += 1;
-                        let op = self.instructions.get(instr_idx).unwrap();
-                        let count = repeat(true, &src[src_idx+i..], &op, *num);
-                        successful = instr.run(None, Some(count));
-                        len += count as usize;
-                        if count == 0 && successful {
-                            src_idx += i;
-                            instr_idx += 1;
-                            break;
-                        }
-                    },
-                    _ => { 
-                        len += 1; 
-                        successful = instr.run(Some(token), None)
-                    },
-                };
-                if !successful {
-                    instr_idx = 0;
+            let tokens = &src[src_idx..];
+            let result = iter_src(&self.ops, op_idx, tokens);
+            match result.0 {
+                State::Stay => {
+                    src_idx += result.1;
+                    op_idx = result.2
+                },
+                State::Fail => {
                     chr_idx += 1;
                     src_idx = chr_idx;
-                    len = 0;
-                    break;
-                }
-                instr_idx += 1;
+                    op_idx = 0;
+                },
+                State::Done => {
+                    return Some((chr_idx,result.1));
+                },
             }
-
             if src_idx >= src.len() {
                 return None;
             }
@@ -150,10 +170,10 @@ mod tests {
     fn compile_valid_test() {
         let re = "abc.*[]+";
         let tgt = vec![Op::Cmp('a'), Op::Cmp('b'), Op::Cmp('c'), 
-                       Op::AtLeast(0), Op::NoOp, Op::Cmp('['), Op::AtLeast(1), 
-                       Op::Cmp(']'), Op::Final];
+                       Op::AtLeast(0), Op::NoOp, Op::Cmp('['), 
+                       Op::AtLeast(1), Op::Cmp(']'), Op::Final];
         let res = compile(re).unwrap();
-        assert_eq!(tgt, res.instructions);
+        assert_eq!(tgt, res.ops);
     }
 
     #[test]
@@ -168,8 +188,8 @@ mod tests {
 
     #[test]
     fn contains_match_valid_test() {
-        let re = "abce*a[]+";
-        let src = "eftabca[]]]";
+        let re = "abce*k[]+";
+        let src = "ab[]keftabck[]]]";
         let regex = compile(re).unwrap();
         let is_match = regex.contain_match(src);
         assert!(is_match);
@@ -186,11 +206,11 @@ mod tests {
     #[test]
     fn replace_valid_test() {
         let re = "abce*a[]+";
-        let src = "eftabca[]]]asfasdf";
+        let src = "ab[]keftabca[]]]asfasdf";
         let tgt = "hello";
         let regex = compile(re).unwrap();
         let result = regex.replace(src, tgt);
-        assert_eq!(Some(String::from("efthelloasfasdf")), result);
+        assert_eq!(Some(String::from("ab[]kefthelloasfasdf")), result);
     }
 
     #[test]

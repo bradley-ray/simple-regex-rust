@@ -2,6 +2,7 @@
 
 Basic regex engine in rust for educational purposes.
 Mainly to explore building libraries in rust and testing.
+Not close to an efficient implmentation, nor trying to be.
 
 Inspired by [this article](https://www.cs.princeton.edu/courses/archive/spr09/cos333/beautiful.html).
 
@@ -21,9 +22,8 @@ Inspired by [this article](https://www.cs.princeton.edu/courses/archive/spr09/co
 - replace(): replace first match with tgt string
 
 ## TODO
-- [x] implement basic regex compiler
-- [x] implement basic regex execute
-- [ ] initial refactor for simplicity
+- [X] implement basic regex compiler
+- [X] implement basic regex execute
 - [ ] add more features
 	- [ ] start and end of lines
 	- [ ] negates
